@@ -1,0 +1,41 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: asset
+      POSTGRES_PASSWORD: asset123
+      POSTGRES_DB: asset
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U asset"]
+      interval: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://asset:asset123@db:5432/asset
+      JWT_SECRET: change-me-in-production-at-least-32-bytes
+      FRONTEND_URL: http://localhost:8080
+      REMINDER_ENABLED: "true"
+      SMTP_HOST: ""
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  pgdata:

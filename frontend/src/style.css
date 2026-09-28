@@ -1,0 +1,60 @@
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  background: #f5f7fa;
+  color: #303133;
+}
+
+.page-card {
+  background: #fff;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.stat-card {
+  background: #fff;
+  border-radius: 6px;
+  padding: 18px 20px;
+}
+
+.stat-card .label {
+  color: #909399;
+  font-size: 13px;
+}
+
+.stat-card .value {
+  font-size: 28px;
+  font-weight: 600;
+  margin-top: 6px;
+}
+
+.chart-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.chart-row > * {
+  flex: 1 1 380px;
+  background: #fff;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.timeline-title {
+  font-weight: 600;
+}
+
+.muted {
+  color: #909399;
+  font-size: 12px;
+}

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# 本地数据与上传
+backend/data/*.db
+backend/data/*.db-journal
+backend/uploads/
+
+# 环境变量
+.env
+backend/.env
+
+# 前端
+node_modules/
+frontend/dist/
+frontend/.vite/
+vite.config.js.timestamp-*.mjs
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.trae/
+.workbuddy/
+.tmp/
+.DS_Store
+*.log
