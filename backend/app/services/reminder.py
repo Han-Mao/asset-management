@@ -1,7 +1,9 @@
 """每日到期提醒。
 
-懒版替代 Celery + Redis：进程内一个后台线程按天跑；去重不引入 Redis，
-直接查 sys_notification 当天有没有发过同类型提醒（数据量小，够用）。
+懒版替代 Celery + Redis：进程内一个后台线程按天跑；去重不引入 Redis/新表，
+直接查 sys_notification：
+  30/7/1 天里程碑 —— 同一领用记录 + 同一提醒类型，**一辈子只发一次**
+  逾期          —— 同一领用记录，**每天发一次**
 ponytail: 单进程定时器，多实例部署会重复触发，那时再换 Celery Beat。
 """
 
@@ -22,7 +24,7 @@ from . import notification as notif
 
 logger = logging.getLogger("asset.reminder")
 
-# 剩余天数 -> (提醒类型, 文案)
+# 剩余天数 == 以下值时才触发（里程碑式，不是「小于等于」）
 MILESTONES = {
     30: ("ASSET_EXPIRE_30D", "30天内到期"),
     7: ("ASSET_EXPIRE_7D", "7天内到期"),
@@ -30,8 +32,14 @@ MILESTONES = {
 }
 
 
+def _milestone(days: int) -> tuple[str, str] | None:
+    if days < 0:
+        return "ASSET_OVERDUE", "已逾期"
+    return MILESTONES.get(days)
+
+
 def run_reminders(db: Session) -> dict:
-    """扫描领用中的记录，按 30/7/1 天和逾期发提醒。"""
+    """扫描领用中的记录：30/7/1 天各提醒一次，逾期每天提醒一次。"""
     assignment_svc.overdue_status_sync(db)
     rows = db.execute(
         select(AssetAssignment, Asset, User)
@@ -43,44 +51,44 @@ def run_reminders(db: Session) -> dict:
     sent = {"expire": 0, "overdue": 0}
     admin_buckets: dict[str, int] = {}
     for s, asset, user in rows:
-        days = (s.expected_return_time - now()).days
-        if days < 0:
-            kind, label = "ASSET_OVERDUE", "已逾期"
-            if notif.sent_today(db, user.id, kind, s.id):
-                notif.send(
-                    db,
-                    receiver_id=user.id,
-                    title="设备已逾期未归还",
-                    content=f"您领用的 {asset.asset_name}（{asset.asset_code}）已逾期 {-days} 天，请尽快归还。",
-                    notification_type=kind,
-                    related_type="ASSIGNMENT",
-                    related_id=s.id,
-                    email=True,  # 逾期邮件追一下
-                )
-                sent["overdue"] += 1
-            admin_buckets[label] = admin_buckets.get(label, 0) + 1
+        # 按自然日算剩余天数：今天到应归还日差 1 天 = 明天到期
+        days = (s.expected_return_time.date() - now().date()).days
+        hit = _milestone(days)
+        if hit is None:
             continue
-        milestone = next((d for d in sorted(MILESTONES, reverse=True) if days <= d), None)
-        if milestone is None:
-            continue
-        kind, label = MILESTONES[milestone]
+        kind, label = hit
         admin_buckets[label] = admin_buckets.get(label, 0) + 1
-        if notif.sent_today(db, user.id, kind, s.id):
+
+        overdue = kind == "ASSET_OVERDUE"
+        if notif.already_sent(db, user.id, kind, s.id, today_only=overdue):
             continue
-        notif.send(
-            db,
-            receiver_id=user.id,
-            title=f"设备{label}提醒",
-            content=(
-                f"您领用的 {asset.asset_name}（{asset.asset_code}）将于 {s.expected_return_time:%Y-%m-%d} 到期，"
-                f"剩余 {days} 天，请及时归还。"
-            ),
-            notification_type=kind,
-            related_type="ASSIGNMENT",
-            related_id=s.id,
-            email=True,  # 到期提醒：普通用户站内信 + 邮件
-        )
-        sent["expire"] += 1
+        if overdue:
+            notif.send(
+                db,
+                receiver_id=user.id,
+                title="设备已逾期未归还",
+                content=f"您领用的 {asset.asset_name}（{asset.asset_code}）已逾期 {-days} 天，请尽快归还。",
+                notification_type=kind,
+                related_type="ASSIGNMENT",
+                related_id=s.id,
+                email=True,  # 逾期邮件追一下
+            )
+            sent["overdue"] += 1
+        else:
+            notif.send(
+                db,
+                receiver_id=user.id,
+                title=f"设备{label}提醒",
+                content=(
+                    f"您领用的 {asset.asset_name}（{asset.asset_code}）将于 {s.expected_return_time:%Y-%m-%d} 到期，"
+                    f"剩余 {days} 天，请及时归还。"
+                ),
+                notification_type=kind,
+                related_type="ASSIGNMENT",
+                related_id=s.id,
+                email=True,  # 到期提醒：普通用户站内信 + 邮件
+            )
+            sent["expire"] += 1
 
     # 管理员只收站内信汇总
     if admin_buckets:

@@ -55,7 +55,8 @@ export const api = {
   pendingScrap: (id) => http.post(`/assets/${id}/pending-scrap`),
   scrapAsset: (id) => http.post(`/assets/${id}/scrap`),
   assetLifecycle: (id) => http.get(`/assets/${id}/lifecycle`),
-  assetQrcodeUrl: (id) => `/api/assets/${id}/qrcode`,
+  // 二维码接口要鉴权，<img src> 不会带 Authorization 头，所以走 axios 取 blob 再转 objectURL
+  assetQrcode: (id) => http.get(`/assets/${id}/qrcode`, { responseType: 'blob' }),
   importTemplateUrl: () => '/api/assets/import/template',
   importAssets: (file) => {
     const form = new FormData()

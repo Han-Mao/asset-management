@@ -25,11 +25,12 @@ def list_assignments(
 @router.get("/my")
 def my_assignments(
     status: str | None = None,
+    current: bool = False,
     page: Page = Depends(),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
-    return asg_svc.my_assignments(db, page, user.id, status)
+    return asg_svc.my_assignments(db, page, user.id, status, current=current)
 
 
 @router.get("/{assignment_id}")

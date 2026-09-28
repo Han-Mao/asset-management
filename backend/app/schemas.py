@@ -105,6 +105,13 @@ class DepartmentIn(BaseModel):
     parent_id: int | None = None
 
 
+class DepartmentUpdate(BaseModel):
+    """PUT 时字段都可选：只改上级部门不该被迫带部门名。"""
+
+    department_name: str | None = None
+    parent_id: int | None = None
+
+
 class DepartmentOut(ORMModel):
     id: int
     department_name: str

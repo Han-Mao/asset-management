@@ -8,6 +8,7 @@ from ..core.database import now
 from ..core.errors import BizError
 from ..models import Asset, AssetAssignment, AssetRepair, User
 from . import notification as notif
+from .asset import viewer_is_admin
 from .common import change_asset_status, gen_no, write_log
 
 
@@ -62,14 +63,11 @@ def list_repairs(db: Session, page, status: str | None = None, keyword: str | No
     return page.wrap([_row(db, r) for r in rows], total)
 
 
-def _has_active_assignment(db: Session, asset_id: int) -> bool:
-    return bool(
-        db.scalar(
-            select(func.count())
-            .select_from(AssetAssignment)
-            .where(AssetAssignment.asset_id == asset_id, AssetAssignment.status.in_(ACTIVE_ASSIGNMENT_STATUS))
-        )
-    )
+def _has_active_assignment(db: Session, asset_id: int, user_id: int | None = None) -> bool:
+    cond = [AssetAssignment.asset_id == asset_id, AssetAssignment.status.in_(ACTIVE_ASSIGNMENT_STATUS)]
+    if user_id is not None:
+        cond.append(AssetAssignment.user_id == user_id)
+    return bool(db.scalar(select(func.count()).select_from(AssetAssignment).where(*cond)))
 
 
 def create_repair(db: Session, data, user, request=None) -> dict:
@@ -80,6 +78,9 @@ def create_repair(db: Session, data, user, request=None) -> dict:
         raise BizError("已报废资产不能报修")
     if asset.status in ("PENDING_REPAIR", "REPAIRING"):
         raise BizError("该资产已在维修流程中")
+    # 普通用户只能报修自己当前领用的设备；管理员代报修不受限
+    if not viewer_is_admin(db, user) and not _has_active_assignment(db, asset.id, user.id):
+        raise BizError("只能报修自己当前领用的设备", 40301)
 
     r = AssetRepair(
         repair_no=gen_no("RP"),

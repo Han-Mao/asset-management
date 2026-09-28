@@ -272,12 +272,24 @@ def create_department(db: Session, data, operator=None, request=None) -> Departm
     return d
 
 
+def _assert_no_cycle(db: Session, dept_id: int, parent_id: int | None) -> None:
+    """上级不能是自己或自己的下级，否则部门树成环。"""
+    seen: set[int] = set()
+    cur = parent_id
+    while cur:
+        if cur == dept_id:
+            raise BizError("上级部门不能是自己或自己的下级部门")
+        if cur in seen:  # 库里已有脏环，别死循环
+            break
+        seen.add(cur)
+        cur = db.scalar(select(Department.parent_id).where(Department.id == cur))
+
+
 def update_department(db: Session, dept_id: int, data, operator=None, request=None) -> Department:
     d = db.get(Department, dept_id)
     if d is None:
         raise BizError("部门不存在", 40401)
-    if data.parent_id == dept_id:
-        raise BizError("上级部门不能是自己")
+    _assert_no_cycle(db, dept_id, data.parent_id)
     if data.department_name:
         d.department_name = data.department_name
     if data.parent_id is not None:

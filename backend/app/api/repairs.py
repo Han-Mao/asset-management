@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from ..core.deps import Page, get_current_user, get_db, require_permission
+from ..core.errors import BizError
 from ..core.response import EnvelopeRoute
 from ..schemas import RepairCreate, RepairUpdate
 from ..services import repair as repair_svc
@@ -36,7 +37,10 @@ def list_repairs(
 
 @router.get("/{repair_id}")
 def get_repair(repair_id: int, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    return repair_svc.get_repair(db, repair_id)
+    data = repair_svc.get_repair(db, repair_id)
+    if not viewer_is_admin(db, user) and data["reporter_id"] != user.id:
+        raise BizError("无权查看该维修记录", 40301)
+    return data
 
 
 @router.put("/{repair_id}")

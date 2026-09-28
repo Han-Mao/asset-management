@@ -78,21 +78,21 @@ def send_to_role(db: Session, role_codes: list[str], **kw) -> int:
     return len(set(ids))
 
 
-def sent_today(db: Session, receiver_id: int, notification_type: str, related_id: int) -> bool:
-    """提醒去重：同一接收人 + 同一类型 + 同一领用记录，当天只发一次。"""
-    start = now().replace(hour=0, minute=0, second=0, microsecond=0)
-    return bool(
-        db.scalar(
-            select(func.count())
-            .select_from(Notification)
-            .where(
-                Notification.receiver_id == receiver_id,
-                Notification.notification_type == notification_type,
-                Notification.related_id == related_id,
-                Notification.created_at >= start - timedelta(hours=8),
-            )
-        )
-    )
+def already_sent(db: Session, receiver_id: int, notification_type: str, related_id: int, today_only: bool = False) -> bool:
+    """提醒去重：同一接收人 + 同一类型 + 同一业务对象是否已发过。
+
+    today_only=False（30/7/1 天里程碑）→ 一辈子只发一次；
+    today_only=True（逾期）→ 当天发过就不再发，第二天可以再发。
+    """
+    cond = [
+        Notification.receiver_id == receiver_id,
+        Notification.notification_type == notification_type,
+        Notification.related_id == related_id,
+    ]
+    if today_only:
+        start = now().replace(hour=0, minute=0, second=0, microsecond=0)
+        cond.append(Notification.created_at >= start - timedelta(hours=8))  # 本地日 0 点对应的 UTC
+    return bool(db.scalar(select(func.count()).select_from(Notification).where(*cond)))
 
 
 def list_my(db: Session, user_id: int, only_unread: bool, page) -> dict:

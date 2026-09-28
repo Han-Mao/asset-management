@@ -1,6 +1,7 @@
 from io import BytesIO
 
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 from ..core.config import settings
@@ -17,6 +18,29 @@ from ..models import (
     User,
 )
 from .common import change_asset_status, next_asset_code, write_log
+
+
+def viewer_is_admin(db: Session, user) -> bool:
+    from .system import user_roles
+
+    return "ADMIN" in user_roles(db, user.id)
+
+
+def get_accessible_asset(db: Session, asset_id: int, viewer=None) -> Asset:
+    """资产访问权限的唯一入口：详情/生命周期/二维码都用它，别各写一套判断。
+
+    管理员看全部；普通用户只能看「在库资产」和「自己当前领用的资产」。
+    """
+    asset = db.get(Asset, asset_id)
+    if asset is None:
+        raise BizError("资产不存在", 40401)
+    if viewer is None or viewer_is_admin(db, viewer):
+        return asset
+    if asset.status == "IN_STOCK":
+        return asset
+    if current_assignment_map(db, [asset.id]).get(asset.id, {}).get("borrower_id") == viewer.id:
+        return asset
+    raise BizError("无权查看该资产", 40301)
 
 
 def current_assignment_map(db: Session, asset_ids: list[int]) -> dict[int, dict]:
@@ -118,12 +142,6 @@ def build_query(
     return stmt
 
 
-def viewer_is_admin(db: Session, user) -> bool:
-    from .system import user_roles
-
-    return "ADMIN" in user_roles(db, user.id)
-
-
 def list_assets(db: Session, page, viewer=None, **filters) -> dict:
     stmt = build_query(db, viewer=viewer, **filters)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
@@ -149,31 +167,34 @@ def list_assets(db: Session, page, viewer=None, **filters) -> dict:
     return page.wrap(items, total)
 
 
-def get_asset(db: Session, asset_id: int) -> dict:
-    row = db.execute(
-        select(Asset, AssetCategory.category_name)
-        .join(AssetCategory, AssetCategory.id == Asset.category_id)
-        .where(Asset.id == asset_id)
-    ).first()
-    if row is None:
-        raise BizError("资产不存在", 40401)
-    asset, cname = row
+def get_asset(db: Session, asset_id: int, viewer=None) -> dict:
+    asset = get_accessible_asset(db, asset_id, viewer)
+    cname = db.scalar(select(AssetCategory.category_name).where(AssetCategory.id == asset.category_id))
     return _row(asset, cname, current_assignment_map(db, [asset.id]).get(asset.id))
 
 
 def create_asset(db: Session, data, operator=None, request=None) -> dict:
-    code = data.asset_code or next_asset_code(db)
-    if db.scalar(select(func.count()).select_from(Asset).where(Asset.asset_code == code)):
-        raise BizError(f"资产编号 {code} 已存在")
     if not db.get(AssetCategory, data.category_id):
         raise BizError("资产类型不存在")
     payload = data.model_dump(exclude={"asset_code"})
-    asset = Asset(asset_code=code, status="IN_STOCK", **payload)
-    db.add(asset)
-    db.flush()
+    # ponytail: 编号用 max(code)+1，并发下会撞号 —— 靠唯一索引 + 最多 5 次重试兜底。
+    # 要严格不重不跳号就换 PostgreSQL Sequence（SQLite 不支持，本地跑不了）。
+    for attempt in range(5):
+        code = data.asset_code or next_asset_code(db)
+        if db.scalar(select(func.count()).select_from(Asset).where(Asset.asset_code == code)):
+            raise BizError(f"资产编号 {code} 已存在")
+        asset = Asset(asset_code=code, status="IN_STOCK", **payload)
+        db.add(asset)
+        try:
+            db.flush()
+            break
+        except IntegrityError:
+            db.rollback()
+            if data.asset_code or attempt == 4:
+                raise BizError(f"资产编号 {code} 冲突，请重试") from None
     write_log(db, operator.id if operator else None, "ASSET_CREATE", "ASSET", asset.id, f"新增资产 {asset.asset_code}", request)
     db.commit()
-    return get_asset(db, asset.id)
+    return get_asset(db, asset.id, viewer=operator)
 
 
 def update_asset(db: Session, asset_id: int, data, operator=None, request=None) -> dict:
@@ -189,7 +210,7 @@ def update_asset(db: Session, asset_id: int, data, operator=None, request=None) 
         setattr(asset, k, v)
     write_log(db, operator.id if operator else None, "ASSET_UPDATE", "ASSET", asset.id, f"修改资产 {asset.asset_code}", request)
     db.commit()
-    return get_asset(db, asset.id)
+    return get_asset(db, asset.id, viewer=operator)
 
 
 def delete_asset(db: Session, asset_id: int, operator=None, request=None) -> None:
@@ -208,36 +229,36 @@ def delete_asset(db: Session, asset_id: int, operator=None, request=None) -> Non
     db.commit()
 
 
-def scrap_asset(db: Session, asset_id: int, operator=None, request=None) -> dict:
-    asset = db.get(Asset, asset_id)
-    if asset is None:
-        raise BizError("资产不存在", 40401)
-    if asset.status == "IN_STOCK":
-        change_asset_status(asset, "PENDING_SCRAP")
-    if asset.status == "PENDING_SCRAP":
-        change_asset_status(asset, "SCRAPPED")
-    write_log(db, operator.id if operator else None, "ASSET_SCRAP", "ASSET", asset.id, f"报废资产 {asset.asset_code}", request)
-    db.commit()
-    return get_asset(db, asset.id)
-
-
 def mark_pending_scrap(db: Session, asset_id: int, operator=None, request=None) -> dict:
+    """第一步：在库/已领用 → 待报废"""
     asset = db.get(Asset, asset_id)
     if asset is None:
         raise BizError("资产不存在", 40401)
     change_asset_status(asset, "PENDING_SCRAP")
     write_log(db, operator.id if operator else None, "ASSET_PENDING_SCRAP", "ASSET", asset.id, f"提交待报废 {asset.asset_code}", request)
     db.commit()
-    return get_asset(db, asset.id)
+    return get_asset(db, asset.id, viewer=operator)
 
 
-def qrcode_png(db: Session, asset_id: int) -> bytes:
-    import qrcode
-
+def scrap_asset(db: Session, asset_id: int, operator=None, request=None) -> dict:
+    """第二步：待报废 → 已报废（必须两步，避免一次调用直接报废）"""
     asset = db.get(Asset, asset_id)
     if asset is None:
         raise BizError("资产不存在", 40401)
+    if asset.status != "PENDING_SCRAP":
+        raise BizError(f"资产当前为「{ASSET_STATUS.get(asset.status, asset.status)}」，只有「待报废」资产才能确认报废")
+    change_asset_status(asset, "SCRAPPED")
+    write_log(db, operator.id if operator else None, "ASSET_SCRAP", "ASSET", asset.id, f"确认报废 {asset.asset_code}", request)
+    db.commit()
+    return get_asset(db, asset.id, viewer=operator)
+
+
+def qrcode_png(db: Session, asset_id: int, viewer=None) -> bytes:
+    import qrcode
+
+    asset = get_accessible_asset(db, asset_id, viewer)
     # 二维码只存详情页 URL，扫码后服务端重新查最新数据（前端是 hash 路由）
+    # 未登录扫码会先跳登录页再回详情，不额外开放匿名接口
     url = f"{settings.frontend_url}/#/assets/{asset.id}"
     img = qrcode.make(url)
     buf = BytesIO()
@@ -245,11 +266,9 @@ def qrcode_png(db: Session, asset_id: int) -> bytes:
     return buf.getvalue()
 
 
-def lifecycle(db: Session, asset_id: int) -> list[dict]:
+def lifecycle(db: Session, asset_id: int, viewer=None) -> list[dict]:
     """生命周期不单独建表，由 asset + application + assignment + repair + log 组合出来。"""
-    asset = db.get(Asset, asset_id)
-    if asset is None:
-        raise BizError("资产不存在", 40401)
+    asset = get_accessible_asset(db, asset_id, viewer)
     events = [
         {
             "time": asset.created_at,

@@ -84,9 +84,7 @@
         <el-table-column prop="asset_name" label="设备" />
         <el-table-column label="状态" width="110">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'OVERDUE' ? 'danger' : 'success'">
-              {{ row.status === 'OVERDUE' ? '已逾期' : '使用中' }}
-            </el-tag>
+            <el-tag :type="row.status === 'OVERDUE' ? 'danger' : 'success'">{{ assignmentLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="预计归还" width="130">
@@ -174,6 +172,12 @@ function fmtDate(v) {
   return v ? String(v).slice(0, 10) : '-'
 }
 
+const ASSIGNMENT_LABELS = { ACTIVE: '使用中', OVERDUE: '已逾期', RETURNED: '已归还' }
+
+function assignmentLabel(status) {
+  return ASSIGNMENT_LABELS[status] || status
+}
+
 async function runReminder() {
   const res = await api.triggerReminder()
   ElMessage.success(`提醒任务完成：到期提醒 ${res.expire} 条、逾期提醒 ${res.overdue} 条`)
@@ -205,7 +209,8 @@ async function load() {
     statusData.value = await api.assetStatusChart()
     categoryData.value = await api.assetCategoryChart()
   } else {
-    myAssignments.value = (await api.myAssignments({ status: '', page_size: 50 })).items
+    // current=true：只取当前持有的设备，已归还的历史记录不进「我的设备」
+    myAssignments.value = (await api.myAssignments({ current: true, page_size: 50 })).items
     myApplications.value = (await api.myApplications({ page_size: 50 })).items
   }
 }

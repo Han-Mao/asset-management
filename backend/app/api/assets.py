@@ -95,7 +95,7 @@ def import_assets(
     db: Session = Depends(get_db),
     user=Depends(require_permission("asset:import")),
 ):
-    if not file.filename or not file.filename.lower().endswith((".xlsx", ".xlsm")):
+    if not file.filename or not file.filename.lower().endswith(".xlsx"):
         raise BizError("请上传 .xlsx 文件")
     try:
         return import_export.import_assets(db, file.file.read(), user, request)
@@ -104,8 +104,8 @@ def import_assets(
 
 
 @router.get("/{asset_id}")
-def get_asset(asset_id: int, db: Session = Depends(get_db), _=Depends(require_permission("asset:read"))):
-    return asset_svc.get_asset(db, asset_id)
+def get_asset(asset_id: int, db: Session = Depends(get_db), user=Depends(require_permission("asset:read"))):
+    return asset_svc.get_asset(db, asset_id, viewer=user)
 
 
 @router.put("/{asset_id}")
@@ -131,13 +131,13 @@ def delete_asset(
 
 
 @router.get("/{asset_id}/qrcode")
-def asset_qrcode(asset_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    return Response(content=asset_svc.qrcode_png(db, asset_id), media_type="image/png")
+def asset_qrcode(asset_id: int, db: Session = Depends(get_db), user=Depends(require_permission("asset:read"))):
+    return Response(content=asset_svc.qrcode_png(db, asset_id, viewer=user), media_type="image/png")
 
 
 @router.get("/{asset_id}/lifecycle")
-def asset_lifecycle(asset_id: int, db: Session = Depends(get_db), _=Depends(get_current_user)):
-    return asset_svc.lifecycle(db, asset_id)
+def asset_lifecycle(asset_id: int, db: Session = Depends(get_db), user=Depends(require_permission("asset:read"))):
+    return asset_svc.lifecycle(db, asset_id, viewer=user)
 
 
 @router.post("/{asset_id}/pending-scrap")

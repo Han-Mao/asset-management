@@ -87,10 +87,10 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="qrVisible" title="资产二维码" width="360px" align-center>
+    <el-dialog v-model="qrVisible" title="资产二维码" width="360px" align-center @closed="releaseQr">
       <div style="text-align: center">
-        <img v-if="current" :src="api.assetQrcodeUrl(current.id) + '?t=' + Date.now()" style="width: 240px; height: 240px" />
-        <p class="muted">扫码打开资产详情页（内容是最新数据）</p>
+        <img v-if="qrUrl" :src="qrUrl" style="width: 240px; height: 240px" />
+        <p class="muted">扫码打开资产详情页（内容是最新数据，需登录）</p>
         <p>{{ current?.asset_code }}</p>
       </div>
     </el-dialog>
@@ -115,6 +115,7 @@ const borrowRange = ref([])
 const returnRange = ref([])
 const applyVisible = ref(false)
 const qrVisible = ref(false)
+const qrUrl = ref('')
 const current = ref(null)
 const applyForm = reactive({ reason: '', expected_return_time: '' })
 const query = reactive({ keyword: '', category_id: '', status: '' })
@@ -190,9 +191,19 @@ function apply(row) {
   applyVisible.value = true
 }
 
-function showQr(row) {
+async function showQr(row) {
   current.value = row
+  releaseQr()
+  const resp = await api.assetQrcode(row.id)
+  qrUrl.value = URL.createObjectURL(resp.data)
   qrVisible.value = true
+}
+
+function releaseQr() {
+  if (qrUrl.value) {
+    URL.revokeObjectURL(qrUrl.value)
+    qrUrl.value = ''
+  }
 }
 
 async function submitApply() {

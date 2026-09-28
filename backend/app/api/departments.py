@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from ..core.deps import get_current_user, get_db, require_permission
 from ..core.response import EnvelopeRoute
-from ..schemas import DepartmentIn
+from ..schemas import DepartmentIn, DepartmentUpdate
 from ..services import system as sys_svc
 
 router = APIRouter(prefix="/departments", tags=["部门管理"], route_class=EnvelopeRoute)
@@ -27,7 +27,7 @@ def create_department(
 @router.put("/{dept_id}")
 def update_department(
     dept_id: int,
-    data: DepartmentIn,
+    data: DepartmentUpdate,
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(require_permission("department:manage")),

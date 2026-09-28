@@ -40,11 +40,14 @@ def get_assignment(db: Session, assignment_id: int) -> dict:
 
 
 def list_assignments(
-    db: Session, page, status: str | None = None, keyword: str | None = None, user_id: int | None = None
+    db: Session, page, status: str | tuple[str, ...] | None = None, keyword: str | None = None, user_id: int | None = None
 ) -> dict:
     cond = []
     if status:
-        cond.append(AssetAssignment.status == status)
+        # 传字符串 = 精确匹配状态；传元组 = 命中其中任意一个（如「当前持有」）
+        cond.append(
+            AssetAssignment.status.in_(status) if isinstance(status, tuple) else AssetAssignment.status == status
+        )
     if user_id:
         cond.append(AssetAssignment.user_id == user_id)
     if keyword:
@@ -100,8 +103,9 @@ def return_asset(db: Session, assignment_id: int, data, operator, request=None) 
     return _row(db, s)
 
 
-def my_assignments(db: Session, page, user_id: int, status: str | None = None) -> dict:
-    return list_assignments(db, page, status=status, user_id=user_id)
+def my_assignments(db: Session, page, user_id: int, status: str | None = None, current: bool = False) -> dict:
+    """current=True 只返回当前持有的设备（ACTIVE/OVERDUE），首页「我的设备」用这个。"""
+    return list_assignments(db, page, status=ACTIVE_ASSIGNMENT_STATUS if current else status, user_id=user_id)
 
 
 def overdue_status_sync(db: Session) -> int:

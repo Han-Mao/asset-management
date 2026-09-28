@@ -15,8 +15,8 @@
         </div>
         <div style="display: flex; gap: 8px">
           <el-button v-if="auth.hasPerm('asset:update') && asset.status !== 'SCRAPPED'" @click="router.push(`/assets/${asset.id}/edit`)">编辑</el-button>
-          <el-button @click="qrVisible = true">打印二维码</el-button>
-          <el-button v-if="asset.status === 'IN_STOCK' || asset.borrower_id === auth.user?.id" type="warning" @click="repairVisible = true">申请维修</el-button>
+          <el-button @click="showQr">打印二维码</el-button>
+          <el-button v-if="canRepair" type="warning" @click="repairVisible = true">申请维修</el-button>
           <el-button v-if="asset.status === 'IN_STOCK'" type="primary" @click="applyVisible = true">申请领用</el-button>
         </div>
       </div>
@@ -48,9 +48,10 @@
       </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="qrVisible" title="资产二维码" width="360px" align-center>
+    <el-dialog v-model="qrVisible" title="资产二维码" width="360px" align-center @closed="releaseQr">
       <div style="text-align: center">
-        <img :src="api.assetQrcodeUrl(asset.id) + '?t=' + Date.now()" style="width: 240px; height: 240px" />
+        <img v-if="qrUrl" :src="qrUrl" style="width: 240px; height: 240px" />
+        <p class="muted">扫码打开资产详情页（需登录）</p>
         <p>{{ asset.asset_code }}</p>
       </div>
     </el-dialog>
@@ -81,7 +82,7 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { api } from '../api'
@@ -94,11 +95,31 @@ const asset = ref(null)
 const lifecycle = ref([])
 const tab = ref('info')
 const qrVisible = ref(false)
+const qrUrl = ref('')
 const repairVisible = ref(false)
 const applyVisible = ref(false)
 const fault = ref('')
 const reason = ref('')
 const expected = ref('')
+
+// 只有自己当前领用的设备才能报修（管理员在维修管理里接单，不从这里报）
+const canRepair = computed(
+  () => !!asset.value && asset.value.status === 'BORROWED' && asset.value.borrower_id === auth.user?.id
+)
+
+async function showQr() {
+  releaseQr()
+  const resp = await api.assetQrcode(asset.value.id)
+  qrUrl.value = URL.createObjectURL(resp.data)
+  qrVisible.value = true
+}
+
+function releaseQr() {
+  if (qrUrl.value) {
+    URL.revokeObjectURL(qrUrl.value)
+    qrUrl.value = ''
+  }
+}
 
 function fmt(v) {
   return v ? String(v).replace('T', ' ').slice(0, 16) : '-'
